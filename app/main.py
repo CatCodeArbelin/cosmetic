@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
@@ -20,11 +21,12 @@ bot: Bot | None = None
 dispatcher: Dispatcher | None = None
 tg_client: Client | None = None
 redis_client: Redis | None = None
+polling_task: asyncio.Task[None] | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global bot, dispatcher, tg_client, redis_client
+    global bot, dispatcher, tg_client, redis_client, polling_task
 
     setup_logging(settings.log_level)
     await init_database(settings.database_url)
@@ -35,6 +37,7 @@ async def lifespan(_: FastAPI):
 
     bot = build_bot(settings.bot_token.get_secret_value())
     dispatcher = build_dispatcher()
+    polling_task = asyncio.create_task(dispatcher.start_polling(bot))
 
     tg_client = build_client(
         name=settings.telegram_client_name,
@@ -52,6 +55,12 @@ async def lifespan(_: FastAPI):
         await tg_client.stop()
     if redis_client is not None:
         await redis_client.close()
+    if polling_task is not None:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
     if bot is not None:
         await bot.session.close()
 
