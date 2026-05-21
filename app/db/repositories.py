@@ -20,24 +20,34 @@ class DialogRepository:
     async def upsert_dialog(
         self,
         external_chat_id: str,
-        title: str | None = None,
+        external_user_id: int | None = None,
+        client_name: str | None = None,
+        username: str | None = None,
         status: DialogStatus = DialogStatus.NEW,
     ) -> Dialog:
         dialog = await self.get_by_external_chat_id(external_chat_id)
         if dialog is None:
-            dialog = Dialog(external_chat_id=external_chat_id, title=title, status=status)
+            dialog = Dialog(
+                external_chat_id=external_chat_id,
+                external_user_id=external_user_id,
+                client_name=client_name,
+                username=username,
+                status=status,
+            )
             self.session.add(dialog)
         else:
-            dialog.title = title or dialog.title
+            dialog.external_user_id = external_user_id or dialog.external_user_id
+            dialog.client_name = client_name or dialog.client_name
+            dialog.username = username or dialog.username
             dialog.status = status
         await self.session.flush()
         return dialog
 
-    async def assign_operator(self, dialog_id: int, operator_id: int) -> Dialog | None:
+    async def assign_operator(self, dialog_id: int, assigned_operator_id: int) -> Dialog | None:
         dialog = await self.session.get(Dialog, dialog_id)
         if dialog is None:
             return None
-        dialog.operator_id = operator_id
+        dialog.assigned_operator_id = assigned_operator_id
         dialog.status = DialogStatus.ASSIGNED
         await self.session.flush()
         return dialog
@@ -58,7 +68,7 @@ class DialogRepository:
     async def get_my_dialogs(self, operator_id: int, limit: int = 50) -> list[Dialog]:
         query = (
             select(Dialog)
-            .where(Dialog.operator_id == operator_id)
+            .where(Dialog.assigned_operator_id == operator_id)
             .where(Dialog.status.in_([DialogStatus.ASSIGNED, DialogStatus.WAITING_CUSTOMER, DialogStatus.MANUAL]))
             .order_by(Dialog.updated_at.desc())
             .limit(limit)

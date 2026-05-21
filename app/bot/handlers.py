@@ -164,7 +164,7 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             await callback.message.answer(f'Диалог #{dialog_id} закрыт.')
 
         elif action == 'requeue':
-            dialog.operator_id = None
+            dialog.assigned_operator_id = None
             await dialog_repo.update_status(dialog_id, DialogStatus.NEW)
             await session.commit()
             await callback.message.answer(f'Диалог #{dialog_id} возвращен в очередь.')
