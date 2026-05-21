@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import logging
+
 from aiogram import Bot
 from pyrogram import Client, filters
 from pyrogram.types import Message as TgMessage
@@ -7,9 +10,12 @@ from pyrogram.types import Message as TgMessage
 from app.config import get_settings
 from app.db.database import get_session_factory
 from app.db.models import Dialog, DialogStatus
-from app.db.repositories import DialogRepository, MessageRepository
+from app.db.repositories import AISuggestionRepository, DialogRepository, MessageRepository
+from app.services.ai_service import AIService
+from app.services.redis_service import get_redis
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 async def _process_incoming_message(message: TgMessage) -> None:
@@ -18,19 +24,58 @@ async def _process_incoming_message(message: TgMessage) -> None:
     if not message.from_user or message.from_user.is_bot:
         return
 
-    text = message.text or message.caption
+    text = (message.text or message.caption or '').strip()
     external_chat_id = str(message.chat.id)
+    redis = get_redis()
+
+    dedupe_key = f'msg:processed:{external_chat_id}:{message.id}'
+    if not await redis.set(dedupe_key, '1', ex=3600, nx=True):
+        return
+
+    buffer_key = f'msg:buffer:{external_chat_id}'
+    await redis.rpush(buffer_key, json.dumps({'id': message.id, 'text': text, 'payload': message.model_dump()}))
+    await redis.expire(buffer_key, max(60, settings.incoming_debounce_seconds * 5))
+
+    lock_key = f'msg:debounce_lock:{external_chat_id}'
+    if not await redis.set(lock_key, '1', ex=settings.incoming_debounce_seconds + 2, nx=True):
+        return
+
+    await redis.set(f'fsm:dialog:{external_chat_id}', 'collecting', ex=300)
+    await redis.set(f'fsm:dialog_last_ts:{external_chat_id}', str(message.date.timestamp()), ex=300)
+
+    await redis.delete(lock_key)
+    await redis.set(lock_key, '1', ex=settings.incoming_debounce_seconds + 2, nx=True)
+    await redis.expire(lock_key, settings.incoming_debounce_seconds + 2)
+
+    await _flush_if_silent(external_chat_id)
+
+
+async def _flush_if_silent(external_chat_id: str) -> None:
+    redis = get_redis()
+    lock_key = f'msg:debounce_lock:{external_chat_id}'
+    ttl = await redis.ttl(lock_key)
+    if ttl > 1:
+        return
+
+    buffer_key = f'msg:buffer:{external_chat_id}'
+    raw_items = await redis.lrange(buffer_key, 0, 4)
+    if not raw_items:
+        return
+
+    items = [json.loads(raw) for raw in raw_items]
+    await redis.delete(buffer_key)
+    await redis.set(f'fsm:dialog:{external_chat_id}', 'ready_for_ai', ex=300)
+
+    combined_text = '\n'.join(item.get('text', '') for item in items if item.get('text'))
+    latest = items[-1]
 
     session_factory = get_session_factory()
     async with session_factory() as session:
         dialog_repo = DialogRepository(session)
         message_repo = MessageRepository(session)
 
-        if await message_repo.is_duplicate(external_chat_id=external_chat_id, telegram_message_id=message.id):
-            return
-
         dialog = await dialog_repo.get_by_external_chat_id(external_chat_id)
-        title = message.from_user.full_name
+        title = latest.get('payload', {}).get('from_user', {}).get('first_name') or 'Клиент'
 
         if dialog is None:
             dialog = await dialog_repo.upsert_dialog(external_chat_id=external_chat_id, title=title, status=DialogStatus.NEW)
@@ -39,13 +84,19 @@ async def _process_incoming_message(message: TgMessage) -> None:
 
         saved_message = await message_repo.save_incoming(
             dialog_id=dialog.id,
-            telegram_message_id=message.id,
-            raw_payload=message.model_dump(),
-            text=text,
+            telegram_message_id=int(latest['id']),
+            raw_payload={'batched_messages': [i.get('payload', {}) for i in items]},
+            text=combined_text,
         )
+
+        ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
+        v1, v2 = await ai_service.generate_variants(combined_text)
+        await AISuggestionRepository(session).save(saved_message.id, v1, v2, settings.openai_model)
+
         await session.commit()
 
-    await _notify_operators(dialog_id=dialog.id, dialog_title=dialog.title, text=text, message_id=saved_message.id)
+    await redis.set(f'fsm:dialog:{external_chat_id}', 'queued_for_operator', ex=600)
+    await _notify_operators(dialog_id=dialog.id, dialog_title=dialog.title, text=combined_text, message_id=saved_message.id)
 
 
 async def _notify_operators(dialog_id: int, dialog_title: str | None, text: str | None, message_id: int) -> None:
@@ -69,7 +120,10 @@ async def _notify_operators(dialog_id: int, dialog_title: str | None, text: str 
     title = dialog_title or 'Клиент'
     msg = f'📩 Новое сообщение\nДиалог: {title} (ID: {dialog_id})\nТекст: {preview}\nID сообщения: {message_id}'
     for operator_id in recipients:
-        await bot.send_message(chat_id=operator_id, text=msg)
+        try:
+            await bot.send_message(chat_id=operator_id, text=msg)
+        except Exception:
+            logger.exception('Failed to notify operator %s', operator_id)
 
 
 def bind_bot_for_notifications(bot: Bot) -> None:

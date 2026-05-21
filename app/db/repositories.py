@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import Select, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Dialog, DialogStatus, Message, MessageDirection
+from app.db.models import AISuggestion, Dialog, DialogStatus, Message, MessageDirection, OperatorAction, OperatorActionType
 
 
 class DialogRepository:
@@ -135,3 +135,36 @@ class MessageRepository:
             raw_payload=raw_payload,
             text=text,
         )
+
+
+class AISuggestionRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def save(self, message_id: int, variant_1: str, variant_2: str, model: str) -> AISuggestion:
+        suggestion = AISuggestion(message_id=message_id, variant_1=variant_1, variant_2=variant_2, model=model)
+        self.session.add(suggestion)
+        await self.session.flush()
+        return suggestion
+
+
+class OperatorActionRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def save(
+        self,
+        message_id: int,
+        action: OperatorActionType,
+        operator_id: int,
+        selected_reply: str | None = None,
+    ) -> OperatorAction:
+        item = OperatorAction(
+            message_id=message_id,
+            action=action,
+            operator_id=operator_id,
+            selected_reply=selected_reply,
+        )
+        self.session.add(item)
+        await self.session.flush()
+        return item
