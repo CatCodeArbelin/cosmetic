@@ -9,7 +9,9 @@ from app.bot.bot import build_bot, build_dispatcher
 from app.config import get_settings
 from app.db.database import close_database, init_database
 from app.logging_config import setup_logging
-from app.telegram_client.client import build_client
+from app.telegram_client.client import build_client, setup_client_handlers
+from app.telegram_client.handlers import bind_bot_for_notifications
+from app.telegram_client.sender import bind_client
 
 settings = get_settings()
 
@@ -24,7 +26,6 @@ async def lifespan(_: FastAPI):
     global bot, dispatcher, tg_client, redis_client
 
     setup_logging(settings.log_level)
-
     await init_database(settings.database_url)
 
     redis_client = Redis.from_url(settings.redis_url, encoding='utf-8', decode_responses=True)
@@ -37,18 +38,18 @@ async def lifespan(_: FastAPI):
         name=settings.telegram_client_name,
         api_id=settings.telegram_api_id,
         api_hash=settings.telegram_api_hash.get_secret_value(),
-        bot_token=settings.bot_token.get_secret_value(),
     )
+    setup_client_handlers(tg_client)
+    bind_bot_for_notifications(bot)
+    bind_client(tg_client)
     await tg_client.start()
 
     yield
 
     if tg_client is not None:
         await tg_client.stop()
-
     if redis_client is not None:
         await redis_client.close()
-
     if bot is not None:
         await bot.session.close()
 
