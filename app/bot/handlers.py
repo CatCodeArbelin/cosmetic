@@ -10,8 +10,8 @@ from app.bot.keyboards import dialog_actions_keyboard, main_keyboard
 from app.bot.states import DialogState
 from app.config import get_settings
 from app.db.database import get_session_factory
-from app.db.models import Dialog, DialogStatus, Message as DialogMessage, MessageDirection
-from app.db.repositories import DialogRepository, MessageRepository
+from app.db.models import AISuggestion, Dialog, DialogStatus, Message as DialogMessage, MessageDirection, OperatorActionType
+from app.db.repositories import DialogRepository, MessageRepository, OperatorActionRepository
 from app.telegram_client.sender import send_message
 
 router = Router()
@@ -120,9 +120,24 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             await callback.message.answer(f'Диалог #{dialog_id} закреплен за вами.')
 
         elif action in {'send1', 'send2'}:
-            text = f'Вариант {1 if action == "send1" else 2}: Спасибо! Мы скоро ответим подробно.'
+            last_incoming = (
+                await session.execute(
+                    select(DialogMessage)
+                    .where(DialogMessage.dialog_id == dialog_id, DialogMessage.direction == MessageDirection.INCOMING)
+                    .order_by(DialogMessage.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            suggestion = (
+                await session.execute(
+                    select(AISuggestion).where(AISuggestion.message_id == last_incoming.id)
+                )
+            ).scalar_one_or_none() if last_incoming else None
+            text = suggestion.variant_1 if action == 'send1' and suggestion else suggestion.variant_2 if suggestion else 'Спасибо! Мы скоро ответим подробно.'
             sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
             await message_repo.save_outgoing(dialog.id, sent.id, sent.model_dump(), text)
+            if last_incoming:
+                await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.APPROVE, callback.from_user.id, text)
             await dialog_repo.update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
             await session.commit()
             await callback.message.answer('Ответ отправлен клиенту через live-аккаунт.')
@@ -180,6 +195,16 @@ async def manual_reply_handler(message: Message, state: FSMContext) -> None:
         text = message.text or ''
         sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
         await MessageRepository(session).save_outgoing(dialog.id, sent.id, sent.model_dump(), text)
+        last_incoming = (
+            await session.execute(
+                select(DialogMessage)
+                .where(DialogMessage.dialog_id == dialog.id, DialogMessage.direction == MessageDirection.INCOMING)
+                .order_by(DialogMessage.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if last_incoming:
+            await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.EDIT, message.from_user.id, text)
         await DialogRepository(session).update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
         await session.commit()
 

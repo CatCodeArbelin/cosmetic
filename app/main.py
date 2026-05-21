@@ -12,6 +12,7 @@ from app.logging_config import setup_logging
 from app.telegram_client.client import build_client, setup_client_handlers
 from app.telegram_client.handlers import bind_bot_for_notifications
 from app.telegram_client.sender import bind_client
+from app.services.redis_service import bind_redis
 
 settings = get_settings()
 
@@ -30,6 +31,7 @@ async def lifespan(_: FastAPI):
 
     redis_client = Redis.from_url(settings.redis_url, encoding='utf-8', decode_responses=True)
     await redis_client.ping()
+    bind_redis(redis_client)
 
     bot = build_bot(settings.bot_token.get_secret_value())
     dispatcher = build_dispatcher()
