@@ -11,7 +11,7 @@ def authorize_telegram() -> bool:
     sessions_dir = Path('/app/sessions')
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    session_name = sessions_dir / settings.telegram_client_name
+    session_name = sessions_dir / settings.pyrogram_session_name
 
     print('🔐 Запуск авторизации Telegram-аккаунта...')
     print('Введите номер телефона и код подтверждения Telegram в интерактивном режиме.')
