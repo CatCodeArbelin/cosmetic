@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.db.database import get_session_factory
 from app.db.models import AISuggestion, Dialog, DialogStatus, Message as DialogMessage, MessageDirection, OperatorActionType
 from app.db.repositories import DialogRepository, MessageRepository, OperatorActionRepository
+from app.services.ai_service import AIService
 from app.telegram_client.sender import send_message
 
 router = Router()
@@ -97,6 +98,15 @@ async def dialogs_nav_handler(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+def _latest_suggestion_query(message_id: int):
+    return (
+        select(AISuggestion)
+        .where(AISuggestion.message_id == message_id)
+        .order_by(AISuggestion.created_at.desc())
+        .limit(1)
+    )
+
+
 @router.callback_query(F.data.startswith('dialog:'))
 async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> None:
     if not _allowed(callback.from_user.id):
@@ -130,7 +140,7 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             ).scalar_one_or_none()
             suggestion = (
                 await session.execute(
-                    select(AISuggestion).where(AISuggestion.message_id == last_incoming.id)
+                    _latest_suggestion_query(last_incoming.id)
                 )
             ).scalar_one_or_none() if last_incoming else None
             text = suggestion.variant_1 if action == 'send1' and suggestion else suggestion.variant_2 if suggestion else 'Спасибо! Мы скоро ответим подробно.'
@@ -151,7 +161,23 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
                     .limit(1)
                 )
             ).scalar_one_or_none()
-            await callback.message.answer(f'♻️ Регенерация для сообщения #{last_incoming.id if last_incoming else "-"}.')
+            if not last_incoming or not (last_incoming.text or '').strip():
+                await callback.message.answer('Нет входящего сообщения для регенерации.')
+            else:
+                ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
+                v1, v2 = await ai_service.generate_variants(last_incoming.text or '')
+                new_suggestion = AISuggestion(
+                    message_id=last_incoming.id,
+                    variant_1=v1,
+                    variant_2=v2,
+                    model=settings.openai_model,
+                )
+                session.add(new_suggestion)
+                await session.commit()
+                await callback.message.answer(
+                    f'♻️ Сгенерированы новые варианты для сообщения #{last_incoming.id}:\n\n'
+                    f'1) {v1}\n\n2) {v2}'
+                )
 
         elif action == 'manual':
             await state.set_state(DialogState.waiting_manual_reply)

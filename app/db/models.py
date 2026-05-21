@@ -87,7 +87,7 @@ class AISuggestion(Base):
     __tablename__ = 'ai_suggestions'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), index=True, unique=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey('messages.id', ondelete='CASCADE'), index=True)
     variant_1: Mapped[str] = mapped_column(Text, nullable=False)
     variant_2: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(String(120), nullable=False)
