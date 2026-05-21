@@ -15,6 +15,7 @@ def main_keyboard() -> InlineKeyboardMarkup:
 def dialog_actions_keyboard(dialog_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text='🧾 Карточка', callback_data=f'dialog:{dialog_id}:card')],
             [InlineKeyboardButton(text='🫱 Взять в работу', callback_data=f'dialog:{dialog_id}:take')],
             [InlineKeyboardButton(text='✉️ Отправить вариант 1', callback_data=f'dialog:{dialog_id}:send1')],
             [InlineKeyboardButton(text='✉️ Отправить вариант 2', callback_data=f'dialog:{dialog_id}:send2')],
