@@ -165,9 +165,12 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             return
 
         if action == 'take':
-            await dialog_repo.assign_operator(dialog_id, callback.from_user.id)
-            await session.commit()
-            await callback.message.answer(f'Диалог #{dialog_id} закреплен за вами.')
+            assigned_dialog = await dialog_repo.assign_operator(dialog_id, callback.from_user.id)
+            if assigned_dialog is None:
+                await callback.message.answer('Диалог уже в работе')
+            else:
+                await session.commit()
+                await callback.message.answer(f'Диалог #{dialog_id} закреплен за вами.')
 
         elif action in {'send1', 'send2'}:
             last_incoming = (

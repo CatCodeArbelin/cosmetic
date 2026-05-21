@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Select, exists, select
+from sqlalchemy import Select, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AISuggestion, Dialog, DialogStatus, Message, MessageDirection, OperatorAction, OperatorActionType
@@ -44,11 +44,20 @@ class DialogRepository:
         return dialog
 
     async def assign_operator(self, dialog_id: int, assigned_operator_id: int) -> Dialog | None:
-        dialog = await self.session.get(Dialog, dialog_id)
-        if dialog is None:
-            return None
-        dialog.assigned_operator_id = assigned_operator_id
-        dialog.status = DialogStatus.ASSIGNED
+        query = (
+            update(Dialog)
+            .where(Dialog.id == dialog_id)
+            .where(
+                or_(
+                    Dialog.assigned_operator_id.is_(None),
+                    Dialog.assigned_operator_id == assigned_operator_id,
+                )
+            )
+            .values(assigned_operator_id=assigned_operator_id, status=DialogStatus.ASSIGNED)
+            .returning(Dialog)
+        )
+        result = await self.session.execute(query)
+        dialog = result.scalar_one_or_none()
         await self.session.flush()
         return dialog
 
