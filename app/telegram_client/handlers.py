@@ -75,10 +75,21 @@ async def _flush_if_silent(external_chat_id: str) -> None:
         message_repo = MessageRepository(session)
 
         dialog = await dialog_repo.get_by_external_chat_id(external_chat_id)
-        title = latest.get('payload', {}).get('from_user', {}).get('first_name') or 'Клиент'
+        user_payload = latest.get('payload', {}).get('from_user', {})
+        external_user_id = user_payload.get('id')
+        first_name = user_payload.get('first_name') or ''
+        last_name = user_payload.get('last_name') or ''
+        client_name = (f'{first_name} {last_name}'.strip() or None)
+        username = user_payload.get('username')
 
         if dialog is None:
-            dialog = await dialog_repo.upsert_dialog(external_chat_id=external_chat_id, title=title, status=DialogStatus.NEW)
+            dialog = await dialog_repo.upsert_dialog(
+                external_chat_id=external_chat_id,
+                external_user_id=external_user_id,
+                client_name=client_name,
+                username=username,
+                status=DialogStatus.NEW,
+            )
         elif dialog.status == DialogStatus.CLOSED:
             dialog = await dialog_repo.update_status(dialog.id, DialogStatus.NEW) or dialog
 
@@ -107,7 +118,7 @@ async def _notify_operators(dialog_id: int, dialog_title: str | None, text: str 
     session_factory = get_session_factory()
     async with session_factory() as session:
         dialog = await session.get(Dialog, dialog_id)
-        assigned_operator_id = dialog.operator_id if dialog else None
+        assigned_operator_id = dialog.assigned_operator_id if dialog else None
 
     recipients = [assigned_operator_id] if assigned_operator_id else settings.operator_ids
     if not recipients:
