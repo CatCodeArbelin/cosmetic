@@ -1,2 +1,137 @@
-class BaseRepository:
-    pass
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import Select, exists, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import Dialog, DialogStatus, Message, MessageDirection
+
+
+class DialogRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_by_external_chat_id(self, external_chat_id: str) -> Dialog | None:
+        query: Select[tuple[Dialog]] = select(Dialog).where(Dialog.external_chat_id == external_chat_id)
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def upsert_dialog(
+        self,
+        external_chat_id: str,
+        title: str | None = None,
+        status: DialogStatus = DialogStatus.NEW,
+    ) -> Dialog:
+        dialog = await self.get_by_external_chat_id(external_chat_id)
+        if dialog is None:
+            dialog = Dialog(external_chat_id=external_chat_id, title=title, status=status)
+            self.session.add(dialog)
+        else:
+            dialog.title = title or dialog.title
+            dialog.status = status
+        await self.session.flush()
+        return dialog
+
+    async def assign_operator(self, dialog_id: int, operator_id: int) -> Dialog | None:
+        dialog = await self.session.get(Dialog, dialog_id)
+        if dialog is None:
+            return None
+        dialog.operator_id = operator_id
+        dialog.status = DialogStatus.ASSIGNED
+        await self.session.flush()
+        return dialog
+
+    async def update_status(self, dialog_id: int, status: DialogStatus) -> Dialog | None:
+        dialog = await self.session.get(Dialog, dialog_id)
+        if dialog is None:
+            return None
+        dialog.status = status
+        await self.session.flush()
+        return dialog
+
+    async def get_new_dialogs(self, limit: int = 50) -> list[Dialog]:
+        query = select(Dialog).where(Dialog.status == DialogStatus.NEW).order_by(Dialog.created_at.desc()).limit(limit)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def get_my_dialogs(self, operator_id: int, limit: int = 50) -> list[Dialog]:
+        query = (
+            select(Dialog)
+            .where(Dialog.operator_id == operator_id)
+            .where(Dialog.status.in_([DialogStatus.ASSIGNED, DialogStatus.WAITING_CUSTOMER, DialogStatus.MANUAL]))
+            .order_by(Dialog.updated_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def get_closed_dialogs(self, limit: int = 50) -> list[Dialog]:
+        query = select(Dialog).where(Dialog.status == DialogStatus.CLOSED).order_by(Dialog.updated_at.desc()).limit(limit)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+
+class MessageRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def is_duplicate(self, external_chat_id: str, telegram_message_id: int) -> bool:
+        query = (
+            select(
+                exists().where(Dialog.id == Message.dialog_id).where(Dialog.external_chat_id == external_chat_id).where(
+                    Message.telegram_message_id == telegram_message_id
+                )
+            )
+        )
+        result = await self.session.execute(query)
+        return bool(result.scalar())
+
+    async def save_message(
+        self,
+        dialog_id: int,
+        telegram_message_id: int,
+        direction: MessageDirection,
+        raw_payload: dict[str, Any],
+        text: str | None = None,
+    ) -> Message:
+        message = Message(
+            dialog_id=dialog_id,
+            telegram_message_id=telegram_message_id,
+            direction=direction,
+            raw_payload=raw_payload,
+            text=text,
+        )
+        self.session.add(message)
+        await self.session.flush()
+        return message
+
+    async def save_incoming(
+        self,
+        dialog_id: int,
+        telegram_message_id: int,
+        raw_payload: dict[str, Any],
+        text: str | None = None,
+    ) -> Message:
+        return await self.save_message(
+            dialog_id=dialog_id,
+            telegram_message_id=telegram_message_id,
+            direction=MessageDirection.INCOMING,
+            raw_payload=raw_payload,
+            text=text,
+        )
+
+    async def save_outgoing(
+        self,
+        dialog_id: int,
+        telegram_message_id: int,
+        raw_payload: dict[str, Any],
+        text: str | None = None,
+    ) -> Message:
+        return await self.save_message(
+            dialog_id=dialog_id,
+            telegram_message_id=telegram_message_id,
+            direction=MessageDirection.OUTGOING,
+            raw_payload=raw_payload,
+            text=text,
+        )
