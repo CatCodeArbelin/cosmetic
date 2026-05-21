@@ -29,7 +29,7 @@ async def lifespan(_: FastAPI):
     global bot, dispatcher, tg_client, redis_client, polling_task
 
     setup_logging(settings.log_level)
-    await init_database(settings.database_url)
+    await init_database(settings.resolved_database_url)
 
     redis_client = Redis.from_url(settings.redis_url, encoding='utf-8', decode_responses=True)
     await redis_client.ping()
@@ -40,7 +40,7 @@ async def lifespan(_: FastAPI):
     polling_task = asyncio.create_task(dispatcher.start_polling(bot))
 
     tg_client = build_client(
-        name=settings.telegram_client_name,
+        name=settings.pyrogram_session_name,
         api_id=settings.telegram_api_id,
         api_hash=settings.telegram_api_hash.get_secret_value(),
     )
