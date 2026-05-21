@@ -54,10 +54,7 @@ async def last_handler(message: Message) -> None:
             await message.answer('Нет новых диалогов.')
             return
         dialog = dialogs[0]
-        await message.answer(
-            f'Последний новый диалог #{dialog.id}: {dialog.title or dialog.external_chat_id}',
-            reply_markup=dialog_actions_keyboard(dialog.id),
-        )
+        await _render_dialog_card(message, dialog.id)
 
 
 @router.callback_query(F.data.startswith('dialogs:'))
@@ -91,10 +88,7 @@ async def dialogs_nav_handler(callback: CallbackQuery) -> None:
         return
 
     for dialog in dialogs[:10]:
-        await callback.message.answer(
-            f'Диалог #{dialog.id}\nКлиент: {dialog.title or dialog.external_chat_id}\nСтатус: {dialog.status.value}',
-            reply_markup=dialog_actions_keyboard(dialog.id),
-        )
+        await _render_dialog_card(callback.message, dialog.id)
     await callback.answer()
 
 
@@ -104,6 +98,52 @@ def _latest_suggestion_query(message_id: int):
         .where(AISuggestion.message_id == message_id)
         .order_by(AISuggestion.created_at.desc())
         .limit(1)
+    )
+
+
+async def _render_dialog_card(message: Message, dialog_id: int) -> None:
+    async with get_session_factory()() as session:
+        dialog = await session.get(Dialog, dialog_id)
+        if dialog is None:
+            await message.answer('Диалог не найден.')
+            return
+
+        incoming_messages = (
+            await session.execute(
+                select(DialogMessage)
+                .where(DialogMessage.dialog_id == dialog_id, DialogMessage.direction == MessageDirection.INCOMING)
+                .order_by(DialogMessage.created_at.desc())
+                .limit(5)
+            )
+        ).scalars().all()
+
+        latest_incoming = incoming_messages[0] if incoming_messages else None
+        suggestion = (
+            await session.execute(_latest_suggestion_query(latest_incoming.id))
+        ).scalar_one_or_none() if latest_incoming else None
+
+    header = [
+        f'🧾 Диалог #{dialog.id}',
+        f'Клиент: {dialog.client_name or "—"}',
+        f'Username: @{dialog.username}' if dialog.username else 'Username: —',
+    ]
+
+    incoming_block = ['\n📩 Последние входящие:']
+    if incoming_messages:
+        for msg in incoming_messages:
+            incoming_block.append(f'• {(msg.text or "<без текста>").strip() or "<без текста>"}')
+    else:
+        incoming_block.append('• Нет входящих сообщений.')
+
+    ai_block = [
+        '\n🤖 AI:',
+        f'Вариант 1: {suggestion.variant_1 if suggestion else "—"}',
+        f'Вариант 2: {suggestion.variant_2 if suggestion else "—"}',
+    ]
+
+    await message.answer(
+        '\n'.join(header + incoming_block + ai_block),
+        reply_markup=dialog_actions_keyboard(dialog.id),
     )
 
 
@@ -194,6 +234,9 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             await dialog_repo.update_status(dialog_id, DialogStatus.NEW)
             await session.commit()
             await callback.message.answer(f'Диалог #{dialog_id} возвращен в очередь.')
+
+        elif action == 'card':
+            await _render_dialog_card(callback.message, dialog_id)
 
     await callback.answer()
 
