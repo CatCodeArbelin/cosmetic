@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pyrogram
+tgcrypto
+aiogram>=3
+sqlalchemy>=2
+asyncpg
+redis
+openai
+python-dotenv
+pydantic-settings

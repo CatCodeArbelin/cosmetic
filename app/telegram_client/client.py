@@ -1,0 +1,5 @@
+from pyrogram import Client
+
+
+def build_client(name: str, api_id: int, api_hash: str, bot_token: str) -> Client:
+    return Client(name=name, api_id=api_id, api_hash=api_hash, bot_token=bot_token)
