@@ -1,8 +1,8 @@
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     )
     telegram_phone: str | None = Field(default=None, alias='TELEGRAM_PHONE')
 
-    operator_ids: list[int] = Field(default_factory=list, alias='OPERATOR_IDS')
+    operator_ids: Annotated[list[int], NoDecode] = Field(default_factory=list, alias='OPERATOR_IDS')
     incoming_debounce_seconds: int = Field(default=7, alias='INCOMING_DEBOUNCE_SECONDS', ge=0, le=60)
 
     ai_enabled: bool = Field(default=False, alias='AI_ENABLED')
