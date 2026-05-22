@@ -117,8 +117,8 @@ docker compose run --rm app python -m app.auth_telegram
 
 Что происходит:
 - интерактивный ввод номера телефона и кода Telegram;
-- при успешном входе session-файл (`PYROGRAM_SESSION_NAME`) сохраняется в `/app/sessions`;
-- на хосте это volume `./sessions`.
+- при успешном входе session-файл (`PYROGRAM_SESSION_NAME`) сохраняется в `/app/app/sessions`;
+- на хосте это volume `./app/sessions`.
 
 ## 8) Получение `OPENAI_API_KEY`
 
@@ -204,7 +204,7 @@ docker compose logs -f redis
 4. **Не подключается к PostgreSQL/Redis**
    - Проверьте `DATABASE_URL`, `REDIS_URL`, статус контейнеров.
 5. **Нет session-файла Pyrogram**
-   - Запустите авторизацию заново и убедитесь в наличии volume `./sessions:/app/sessions`.
+   - Запустите авторизацию заново и убедитесь в наличии volume `./app/sessions:/app/app/sessions`.
 
 ## 14) Резервное копирование PostgreSQL
 
@@ -235,7 +235,7 @@ cat backup.sql | docker compose exec -T postgres psql -U "$POSTGRES_USER" "$POST
 
 ```bash
 cp .env.example .env
-mkdir -p sessions
+mkdir -p app/sessions
 docker compose run --rm app python -m app.auth_telegram
 docker compose up --build
 ```
