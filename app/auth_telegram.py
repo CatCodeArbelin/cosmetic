@@ -8,7 +8,7 @@ from app.config import get_settings
 def authorize_telegram() -> bool:
     settings = get_settings()
 
-    sessions_dir = Path('/app/sessions')
+    sessions_dir = Path(settings.telegram_session_dir).expanduser()
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
     print('🔐 Запуск авторизации Telegram-аккаунта...')

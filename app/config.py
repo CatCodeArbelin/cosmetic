@@ -26,6 +26,7 @@ class Settings(BaseSettings):
         default='cosmetic_client',
         validation_alias=AliasChoices('PYROGRAM_SESSION_NAME', 'TELEGRAM_CLIENT_NAME'),
     )
+    telegram_session_dir: str = Field(default='/app/app/sessions', alias='TELEGRAM_SESSION_DIR')
     telegram_phone: str | None = Field(default=None, alias='TELEGRAM_PHONE')
 
     operator_ids: Annotated[list[int], NoDecode] = Field(default_factory=list, alias='OPERATOR_IDS')
