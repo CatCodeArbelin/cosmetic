@@ -128,7 +128,13 @@ class DialogService:
         return dialog
 
     async def generate_and_save_ai_suggestion(self, *, message: Message, text: str) -> AISuggestion:
-        ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
+        api_key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else None
+        ai_service = AIService(
+            model=settings.openai_model,
+            api_key=api_key,
+            provider=settings.ai_provider,
+            enabled=settings.ai_enabled,
+        )
         v1, v2 = await ai_service.generate_variants(text, dialog_id=message.dialog_id, message_id=message.id, external_chat_id=message.external_chat_id)
         return await self.ai_suggestion_repo.save(message.id, v1, v2, settings.openai_model)
 

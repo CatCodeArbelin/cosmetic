@@ -45,7 +45,10 @@ async def status_handler(message: Message) -> None:
     if not _allowed(message.from_user.id):
         await _deny(message)
         return
-    await message.answer('✅ Бот работает.', reply_markup=main_keyboard())
+    await message.answer(
+        f'✅ Бот работает.\nAI: {settings.ai_mode}',
+        reply_markup=main_keyboard(),
+    )
 
 
 @router.message(Command('last'))
