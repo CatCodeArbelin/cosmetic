@@ -10,9 +10,8 @@ from pyrogram.types import Message as TgMessage
 
 from app.config import get_settings
 from app.db.database import get_session_factory
-from app.db.models import Dialog, DialogStatus
-from app.db.repositories import AISuggestionRepository, DialogRepository, MessageRepository
-from app.services.ai_service import AIService
+from app.db.models import Dialog
+from app.services.dialog_service import DialogService
 from app.services.redis_service import get_redis
 
 settings = get_settings()
@@ -91,74 +90,33 @@ async def _flush_buffer(external_chat_id: str) -> None:
 
         session_factory = get_session_factory()
         async with session_factory() as session:
-            dialog_repo = DialogRepository(session)
-            message_repo = MessageRepository(session)
+            dialog_service = DialogService(session)
 
-            dialog = await dialog_repo.get_active_by_external_chat_id(external_chat_id)
             user_payload = latest.get('payload', {}).get('from_user', {})
             external_user_id = user_payload.get('id')
             first_name = user_payload.get('first_name') or ''
             last_name = user_payload.get('last_name') or ''
             client_name = (f'{first_name} {last_name}'.strip() or None)
             username = user_payload.get('username')
+            dialog = await dialog_service.get_or_create_active_dialog(
+                external_chat_id=external_chat_id,
+                external_user_id=external_user_id,
+                client_name=client_name,
+                username=username,
+            )
 
-            if dialog is None:
-                latest_dialog = await dialog_repo.get_latest_by_external_chat_id(external_chat_id)
-                if latest_dialog is not None and latest_dialog.status == DialogStatus.CLOSED:
-                    dialog = Dialog(
-                        external_chat_id=external_chat_id,
-                        external_user_id=external_user_id,
-                        client_name=client_name,
-                        username=username,
-                        status=DialogStatus.NEW,
-                    )
-                    session.add(dialog)
-                    await session.flush()
-                else:
-                    dialog = await dialog_repo.upsert_dialog(
-                        external_chat_id=external_chat_id,
-                        external_user_id=external_user_id,
-                        client_name=client_name,
-                        username=username,
-                        status=DialogStatus.NEW,
-                    )
-
-            # Processing card for a batch:
-            # use the latest message as AI trigger, while the rest are persisted as history.
-            trigger_telegram_message_id = int(latest['id'])
-            saved_messages = []
-            batch_size = len(items)
-            for index, item in enumerate(items, start=1):
-                telegram_message_id = int(item['id'])
-                is_trigger = telegram_message_id == trigger_telegram_message_id
-                saved_item = await message_repo.try_register_incoming(
-                    dialog_id=dialog.id,
-                    external_chat_id=external_chat_id,
-                    telegram_message_id=telegram_message_id,
-                    raw_payload={
-                        'payload': item.get('payload', {}),
-                        'batch': {
-                            'size': batch_size,
-                            'position': index,
-                            'trigger_telegram_message_id': trigger_telegram_message_id,
-                            'is_trigger': is_trigger,
-                        },
-                    },
-                    text=item.get('text'),
-                )
-                if saved_item is not None:
-                    saved_messages.append(saved_item)
+            saved_messages, trigger_message, combined_text = await dialog_service.save_incoming_batch(
+                dialog=dialog,
+                external_chat_id=external_chat_id,
+                items=items,
+            )
 
             if not saved_messages:
                 return
 
-            trigger_message = saved_messages[-1]
-
-            ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
             logger.info('ai request send', extra=_log_ctx(dialog_id=dialog.id, message_id=trigger_message.id, external_chat_id=external_chat_id, action='ai_request_sent'))
-            v1, v2 = await ai_service.generate_variants(combined_text, dialog_id=dialog.id, message_id=trigger_message.id, external_chat_id=external_chat_id)
+            await dialog_service.generate_and_save_ai_suggestion(message=trigger_message, text=combined_text)
             logger.info('ai response received', extra=_log_ctx(dialog_id=dialog.id, message_id=trigger_message.id, external_chat_id=external_chat_id, action='ai_response_received'))
-            await AISuggestionRepository(session).save(trigger_message.id, v1, v2, settings.openai_model)
 
             await session.commit()
 

@@ -6,15 +6,13 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import select
-
 from app.bot.keyboards import dialog_actions_keyboard, main_keyboard
 from app.bot.states import DialogState
 from app.config import get_settings
 from app.db.database import get_session_factory
-from app.db.models import AISuggestion, Dialog, DialogStatus, Message as DialogMessage, MessageDirection, OperatorActionType
-from app.db.repositories import DialogRepository, MessageRepository, OperatorActionRepository
-from app.services.ai_service import AIService
+from app.db.models import Dialog, DialogStatus, MessageDirection, OperatorActionType
+from app.db.repositories import DialogRepository
+from app.services.dialog_service import DialogService
 from app.telegram_client.sender import send_message
 
 router = Router()
@@ -99,35 +97,16 @@ async def dialogs_nav_handler(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-def _latest_suggestion_query(message_id: int):
-    return (
-        select(AISuggestion)
-        .where(AISuggestion.message_id == message_id)
-        .order_by(AISuggestion.created_at.desc())
-        .limit(1)
-    )
-
-
 async def _render_dialog_card(message: Message, dialog_id: int) -> None:
     async with get_session_factory()() as session:
-        dialog = await session.get(Dialog, dialog_id)
-        if dialog is None:
+        dialog_service = DialogService(session)
+        card_data = await dialog_service.get_dialog_card_data(dialog_id=dialog_id)
+        if card_data is None:
             await message.answer('Диалог не найден.')
             return
-
-        recent_messages = (
-            await session.execute(
-                select(DialogMessage)
-                .where(DialogMessage.dialog_id == dialog_id)
-                .order_by(DialogMessage.created_at.desc())
-                .limit(5)
-            )
-        ).scalars().all()
-
-        latest_incoming = next((msg for msg in recent_messages if msg.direction == MessageDirection.INCOMING), None)
-        suggestion = (
-            await session.execute(_latest_suggestion_query(latest_incoming.id))
-        ).scalar_one_or_none() if latest_incoming else None
+        dialog = card_data.dialog
+        recent_messages = card_data.recent_messages
+        suggestion = card_data.suggestion
 
     header = [
         f'🧾 Диалог #{dialog.id}',
@@ -165,15 +144,14 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
     dialog_id = int(dialog_id_raw)
 
     async with get_session_factory()() as session:
-        dialog_repo = DialogRepository(session)
-        message_repo = MessageRepository(session)
+        dialog_service = DialogService(session)
         dialog = await session.get(Dialog, dialog_id)
         if dialog is None:
             await callback.answer('Диалог не найден', show_alert=True)
             return
 
         if action == 'take':
-            assigned_dialog = await dialog_repo.assign_operator(dialog_id, callback.from_user.id)
+            assigned_dialog = await dialog_service.assign_operator(dialog_id=dialog_id, operator_id=callback.from_user.id)
             if assigned_dialog is None:
                 await callback.message.answer('Диалог уже в работе.')
             else:
@@ -182,55 +160,36 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
                 await callback.message.answer(f'Диалог #{dialog_id} закреплен за вами.')
 
         elif action in {'send1', 'send2'}:
-            last_incoming = (
-                await session.execute(
-                    select(DialogMessage)
-                    .where(DialogMessage.dialog_id == dialog_id, DialogMessage.direction == MessageDirection.INCOMING)
-                    .order_by(DialogMessage.created_at.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            suggestion = (
-                await session.execute(
-                    _latest_suggestion_query(last_incoming.id)
-                )
-            ).scalar_one_or_none() if last_incoming else None
+            last_incoming, suggestion = await dialog_service.get_last_incoming_with_suggestion(dialog_id=dialog_id)
             text = suggestion.variant_1 if action == 'send1' and suggestion else suggestion.variant_2 if suggestion else 'Спасибо! Мы скоро ответим подробно.'
             logger.info('operator selected reply', extra=_log_ctx(dialog_id=dialog_id, external_chat_id=dialog.external_chat_id, operator_id=callback.from_user.id, action=action))
             sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
-            await message_repo.save_outgoing(dialog.id, dialog.external_chat_id, sent.id, sent.model_dump(), text)
+            await dialog_service.save_outgoing_message(dialog=dialog, telegram_message_id=sent.id, raw_payload=sent.model_dump(), text=text)
             if last_incoming:
-                await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.APPROVE, callback.from_user.id, text)
-            await dialog_repo.update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
+                await dialog_service.register_operator_action(
+                    message_id=last_incoming.id,
+                    action=OperatorActionType.APPROVE,
+                    operator_id=callback.from_user.id,
+                    selected_reply=text,
+                )
+            await dialog_service.update_status(dialog_id=dialog.id, status=DialogStatus.WAITING_CUSTOMER)
             await session.commit()
             logger.info('outgoing sent to client', extra=_log_ctx(dialog_id=dialog_id, message_id=sent.id, external_chat_id=dialog.external_chat_id, operator_id=callback.from_user.id, action='outgoing_sent'))
             await callback.message.answer('Ответ отправлен клиенту через live-аккаунт.')
 
         elif action == 'regen':
-            last_incoming = (
-                await session.execute(
-                    select(DialogMessage)
-                    .where(DialogMessage.dialog_id == dialog_id, DialogMessage.direction == MessageDirection.INCOMING)
-                    .order_by(DialogMessage.created_at.desc())
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
+            last_incoming, _ = await dialog_service.get_last_incoming_with_suggestion(dialog_id=dialog_id)
             if not last_incoming or not (last_incoming.text or '').strip():
                 await callback.message.answer('Нет входящего сообщения для регенерации.')
             else:
-                ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
-                v1, v2 = await ai_service.generate_variants(last_incoming.text or '')
-                new_suggestion = AISuggestion(
-                    message_id=last_incoming.id,
-                    variant_1=v1,
-                    variant_2=v2,
-                    model=settings.openai_model,
+                new_suggestion = await dialog_service.generate_and_save_ai_suggestion(
+                    message=last_incoming,
+                    text=last_incoming.text or '',
                 )
-                session.add(new_suggestion)
                 await session.commit()
                 await callback.message.answer(
                     f'♻️ Сгенерированы новые варианты для сообщения #{last_incoming.id}:\n\n'
-                    f'1) {v1}\n\n2) {v2}'
+                    f'1) {new_suggestion.variant_1}\n\n2) {new_suggestion.variant_2}'
                 )
 
         elif action == 'manual':
@@ -239,13 +198,12 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             await callback.message.answer('Введите ручной ответ следующим сообщением.')
 
         elif action == 'close':
-            await dialog_repo.update_status(dialog_id, DialogStatus.CLOSED)
+            await dialog_service.update_status(dialog_id=dialog_id, status=DialogStatus.CLOSED)
             await session.commit()
             await callback.message.answer(f'Диалог #{dialog_id} закрыт.')
 
         elif action == 'requeue':
-            dialog.assigned_operator_id = None
-            await dialog_repo.update_status(dialog_id, DialogStatus.NEW)
+            await dialog_service.requeue_dialog(dialog=dialog)
             await session.commit()
             await callback.message.answer(f'Диалог #{dialog_id} возвращен в очередь.')
 
@@ -278,20 +236,22 @@ async def manual_reply_handler(message: Message, state: FSMContext) -> None:
         text = message.text or ''
         logger.info('operator manual reply selected', extra=_log_ctx(dialog_id=dialog.id, external_chat_id=dialog.external_chat_id, operator_id=message.from_user.id, action='manual_reply'))
         sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
-        await MessageRepository(session).save_outgoing(
-            dialog.id, dialog.external_chat_id, sent.id, sent.model_dump(), text
+        dialog_service = DialogService(session)
+        await dialog_service.save_outgoing_message(
+            dialog=dialog,
+            telegram_message_id=sent.id,
+            raw_payload=sent.model_dump(),
+            text=text,
         )
-        last_incoming = (
-            await session.execute(
-                select(DialogMessage)
-                .where(DialogMessage.dialog_id == dialog.id, DialogMessage.direction == MessageDirection.INCOMING)
-                .order_by(DialogMessage.created_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        last_incoming, _ = await dialog_service.get_last_incoming_with_suggestion(dialog_id=dialog.id)
         if last_incoming:
-            await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.EDIT, message.from_user.id, text)
-        await DialogRepository(session).update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
+            await dialog_service.register_operator_action(
+                message_id=last_incoming.id,
+                action=OperatorActionType.EDIT,
+                operator_id=message.from_user.id,
+                selected_reply=text,
+            )
+        await dialog_service.update_status(dialog_id=dialog.id, status=DialogStatus.WAITING_CUSTOMER)
         await session.commit()
         logger.info('outgoing sent to client', extra=_log_ctx(dialog_id=dialog.id, message_id=sent.id, external_chat_id=dialog.external_chat_id, operator_id=message.from_user.id, action='outgoing_sent'))
 
