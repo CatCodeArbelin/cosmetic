@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -17,6 +19,7 @@ from app.telegram_client.sender import send_message
 
 router = Router()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _allowed(user_id: int | None) -> bool:
@@ -25,6 +28,10 @@ def _allowed(user_id: int | None) -> bool:
 
 async def _deny(message: Message) -> None:
     await message.answer('⛔ Доступ запрещен.')
+
+
+def _log_ctx(dialog_id: int | str = '-', message_id: int | str = '-', external_chat_id: str = '-', operator_id: int | str = '-', action: str = '-') -> dict[str, int | str]:
+    return {'dialog_id': dialog_id, 'message_id': message_id, 'external_chat_id': external_chat_id, 'operator_id': operator_id, 'action': action}
 
 
 @router.message(Command('start', 'help'))
@@ -170,6 +177,7 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
                 await callback.message.answer('Диалог уже в работе')
             else:
                 await session.commit()
+                logger.info('operator took dialog', extra=_log_ctx(dialog_id=dialog_id, external_chat_id=dialog.external_chat_id, operator_id=callback.from_user.id, action='dialog_taken'))
                 await callback.message.answer(f'Диалог #{dialog_id} закреплен за вами.')
 
         elif action in {'send1', 'send2'}:
@@ -187,12 +195,14 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
                 )
             ).scalar_one_or_none() if last_incoming else None
             text = suggestion.variant_1 if action == 'send1' and suggestion else suggestion.variant_2 if suggestion else 'Спасибо! Мы скоро ответим подробно.'
+            logger.info('operator selected reply', extra=_log_ctx(dialog_id=dialog_id, external_chat_id=dialog.external_chat_id, operator_id=callback.from_user.id, action=action))
             sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
             await message_repo.save_outgoing(dialog.id, dialog.external_chat_id, sent.id, sent.model_dump(), text)
             if last_incoming:
                 await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.APPROVE, callback.from_user.id, text)
             await dialog_repo.update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
             await session.commit()
+            logger.info('outgoing sent to client', extra=_log_ctx(dialog_id=dialog_id, message_id=sent.id, external_chat_id=dialog.external_chat_id, operator_id=callback.from_user.id, action='outgoing_sent'))
             await callback.message.answer('Ответ отправлен клиенту через live-аккаунт.')
 
         elif action == 'regen':
@@ -265,6 +275,7 @@ async def manual_reply_handler(message: Message, state: FSMContext) -> None:
             return
 
         text = message.text or ''
+        logger.info('operator manual reply selected', extra=_log_ctx(dialog_id=dialog.id, external_chat_id=dialog.external_chat_id, operator_id=message.from_user.id, action='manual_reply'))
         sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
         await MessageRepository(session).save_outgoing(
             dialog.id, dialog.external_chat_id, sent.id, sent.model_dump(), text
@@ -281,6 +292,7 @@ async def manual_reply_handler(message: Message, state: FSMContext) -> None:
             await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.EDIT, message.from_user.id, text)
         await DialogRepository(session).update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
         await session.commit()
+        logger.info('outgoing sent to client', extra=_log_ctx(dialog_id=dialog.id, message_id=sent.id, external_chat_id=dialog.external_chat_id, operator_id=message.from_user.id, action='outgoing_sent'))
 
     await message.answer('Ручной ответ отправлен.')
     await state.clear()

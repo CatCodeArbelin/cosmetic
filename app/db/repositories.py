@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from typing import Any
+import logging
 
 from sqlalchemy import Select, exists, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AISuggestion, Dialog, DialogStatus, Message, MessageDirection, OperatorAction, OperatorActionType
+
+logger = logging.getLogger(__name__)
+
+
+def _log_ctx(dialog_id: int | str = '-', message_id: int | str = '-', external_chat_id: str = '-', operator_id: int | str = '-', action: str = '-') -> dict[str, int | str]:
+    return {'dialog_id': dialog_id, 'message_id': message_id, 'external_chat_id': external_chat_id, 'operator_id': operator_id, 'action': action}
 
 
 class DialogRepository:
@@ -189,7 +196,8 @@ class MessageRepository:
                     raw_payload=raw_payload,
                     text=text,
                 )
-        except IntegrityError:
+        except IntegrityError as exc:
+            logger.warning('db duplicate incoming message', extra={**_log_ctx(dialog_id=dialog_id, message_id=telegram_message_id, external_chat_id=external_chat_id, action='db_duplicate_incoming'), 'error_type': type(exc).__name__})
             return None
 
     async def save_outgoing(
