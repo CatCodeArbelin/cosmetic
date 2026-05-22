@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 
 from aiogram import Bot, Dispatcher
 from fastapi import FastAPI
@@ -22,11 +23,14 @@ dispatcher: Dispatcher | None = None
 tg_client: Client | None = None
 redis_client: Redis | None = None
 polling_task: asyncio.Task[None] | None = None
+client_started = False
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global bot, dispatcher, tg_client, redis_client, polling_task
+    global bot, dispatcher, tg_client, redis_client, polling_task, client_started
 
     setup_logging(settings.log_level)
     await init_database(settings.resolved_database_url)
@@ -47,11 +51,16 @@ async def lifespan(_: FastAPI):
     setup_client_handlers(tg_client)
     bind_bot_for_notifications(bot)
     bind_client(tg_client)
-    await tg_client.start()
+    try:
+        await tg_client.start()
+        client_started = True
+    except Exception:
+        client_started = False
+        logger.exception('Failed to start Pyrogram client; continuing without Telegram user client')
 
     yield
 
-    if tg_client is not None:
+    if tg_client is not None and client_started:
         await tg_client.stop()
     if redis_client is not None:
         await redis_client.close()
