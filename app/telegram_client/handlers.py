@@ -106,21 +106,40 @@ async def _flush_buffer(external_chat_id: str) -> None:
             elif dialog.status == DialogStatus.CLOSED:
                 dialog = await dialog_repo.update_status(dialog.id, DialogStatus.NEW) or dialog
 
-            saved_message = await message_repo.save_incoming(
-                dialog_id=dialog.id,
-                telegram_message_id=int(latest['id']),
-                raw_payload={'batched_messages': [i.get('payload', {}) for i in items]},
-                text=combined_text,
-            )
+            # Processing card for a batch:
+            # use the latest message as AI trigger, while the rest are persisted as history.
+            trigger_telegram_message_id = int(latest['id'])
+            saved_messages = []
+            batch_size = len(items)
+            for index, item in enumerate(items, start=1):
+                telegram_message_id = int(item['id'])
+                is_trigger = telegram_message_id == trigger_telegram_message_id
+                saved_item = await message_repo.save_incoming(
+                    dialog_id=dialog.id,
+                    telegram_message_id=telegram_message_id,
+                    raw_payload={
+                        'payload': item.get('payload', {}),
+                        'batch': {
+                            'size': batch_size,
+                            'position': index,
+                            'trigger_telegram_message_id': trigger_telegram_message_id,
+                            'is_trigger': is_trigger,
+                        },
+                    },
+                    text=item.get('text'),
+                )
+                saved_messages.append(saved_item)
+
+            trigger_message = saved_messages[-1]
 
             ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
             v1, v2 = await ai_service.generate_variants(combined_text)
-            await AISuggestionRepository(session).save(saved_message.id, v1, v2, settings.openai_model)
+            await AISuggestionRepository(session).save(trigger_message.id, v1, v2, settings.openai_model)
 
             await session.commit()
 
         await redis.set(f'fsm:dialog:{external_chat_id}', 'queued_for_operator', ex=600)
-        await _notify_operators(dialog_id=dialog.id, dialog_title=dialog.title, text=combined_text, message_id=saved_message.id)
+        await _notify_operators(dialog_id=dialog.id, dialog_title=dialog.title, text=combined_text, message_id=trigger_message.id)
     finally:
         await redis.delete(flush_lock_key)
 
