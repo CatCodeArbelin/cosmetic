@@ -1,7 +1,6 @@
 fastapi
 uvicorn
-pyrofork
-tgcrypto
+telethon
 aiogram>=3
 sqlalchemy>=2
 asyncpg
