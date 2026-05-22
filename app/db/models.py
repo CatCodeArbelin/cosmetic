@@ -63,11 +63,12 @@ class Dialog(Base):
 class Message(Base):
     __tablename__ = 'messages'
     __table_args__ = (
-        UniqueConstraint('dialog_id', 'telegram_message_id', name='uq_messages_dialog_tg_message_id'),
+        UniqueConstraint('external_chat_id', 'telegram_message_id', name='uq_messages_external_chat_tg_message_id'),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     dialog_id: Mapped[int] = mapped_column(ForeignKey('dialogs.id', ondelete='CASCADE'), index=True)
+    external_chat_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     telegram_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     direction: Mapped[MessageDirection] = mapped_column(
         Enum(MessageDirection, name='message_direction_enum'), nullable=False, index=True

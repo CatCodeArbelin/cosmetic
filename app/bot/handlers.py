@@ -188,7 +188,7 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
             ).scalar_one_or_none() if last_incoming else None
             text = suggestion.variant_1 if action == 'send1' and suggestion else suggestion.variant_2 if suggestion else 'Спасибо! Мы скоро ответим подробно.'
             sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
-            await message_repo.save_outgoing(dialog.id, sent.id, sent.model_dump(), text)
+            await message_repo.save_outgoing(dialog.id, dialog.external_chat_id, sent.id, sent.model_dump(), text)
             if last_incoming:
                 await OperatorActionRepository(session).save(last_incoming.id, OperatorActionType.APPROVE, callback.from_user.id, text)
             await dialog_repo.update_status(dialog.id, DialogStatus.WAITING_CUSTOMER)
@@ -266,7 +266,9 @@ async def manual_reply_handler(message: Message, state: FSMContext) -> None:
 
         text = message.text or ''
         sent = await send_message(chat_id=int(dialog.external_chat_id), text=text)
-        await MessageRepository(session).save_outgoing(dialog.id, sent.id, sent.model_dump(), text)
+        await MessageRepository(session).save_outgoing(
+            dialog.id, dialog.external_chat_id, sent.id, sent.model_dump(), text
+        )
         last_incoming = (
             await session.execute(
                 select(DialogMessage)

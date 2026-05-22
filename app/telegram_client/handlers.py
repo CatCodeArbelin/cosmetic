@@ -124,8 +124,9 @@ async def _flush_buffer(external_chat_id: str) -> None:
             for index, item in enumerate(items, start=1):
                 telegram_message_id = int(item['id'])
                 is_trigger = telegram_message_id == trigger_telegram_message_id
-                saved_item = await message_repo.save_incoming(
+                saved_item = await message_repo.try_register_incoming(
                     dialog_id=dialog.id,
+                    external_chat_id=external_chat_id,
                     telegram_message_id=telegram_message_id,
                     raw_payload={
                         'payload': item.get('payload', {}),
@@ -138,7 +139,11 @@ async def _flush_buffer(external_chat_id: str) -> None:
                     },
                     text=item.get('text'),
                 )
-                saved_messages.append(saved_item)
+                if saved_item is not None:
+                    saved_messages.append(saved_item)
+
+            if not saved_messages:
+                return
 
             trigger_message = saved_messages[-1]
 
