@@ -22,11 +22,11 @@ class Settings(BaseSettings):
     bot_token: SecretStr = Field(alias='BOT_TOKEN')
     telegram_api_id: int = Field(alias='TELEGRAM_API_ID', gt=0)
     telegram_api_hash: SecretStr = Field(alias='TELEGRAM_API_HASH')
-    pyrogram_session_name: str = Field(
+    telegram_session_name: str = Field(
         default='cosmetic_client',
-        validation_alias=AliasChoices('PYROGRAM_SESSION_NAME', 'TELEGRAM_CLIENT_NAME'),
+        validation_alias=AliasChoices('TELEGRAM_SESSION_NAME', 'PYROGRAM_SESSION_NAME', 'TELEGRAM_CLIENT_NAME'),
     )
-    telegram_session_dir: str = Field(default='/app/app/sessions', alias='TELEGRAM_SESSION_DIR')
+    telegram_session_dir: str = Field(default='/app/sessions', alias='TELEGRAM_SESSION_DIR')
     telegram_phone: str | None = Field(default=None, alias='TELEGRAM_PHONE')
 
     operator_ids: Annotated[list[int], NoDecode] = Field(default_factory=list, alias='OPERATOR_IDS')

@@ -4,7 +4,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from fastapi import FastAPI
-from pyrogram import Client
+from telethon import TelegramClient
 from redis.asyncio import Redis
 
 from app.bot.bot import build_bot, build_dispatcher
@@ -20,7 +20,7 @@ settings = get_settings()
 
 bot: Bot | None = None
 dispatcher: Dispatcher | None = None
-tg_client: Client | None = None
+tg_client: TelegramClient | None = None
 redis_client: Redis | None = None
 polling_task: asyncio.Task[None] | None = None
 client_started = False
@@ -44,7 +44,7 @@ async def lifespan(_: FastAPI):
     polling_task = asyncio.create_task(dispatcher.start_polling(bot))
 
     tg_client = build_client(
-        name=settings.pyrogram_session_name,
+        session_name=settings.telegram_session_name,
         api_id=settings.telegram_api_id,
         api_hash=settings.telegram_api_hash.get_secret_value(),
     )
@@ -56,7 +56,7 @@ async def lifespan(_: FastAPI):
         client_started = True
     except Exception:
         client_started = False
-        logger.exception('Failed to start Pyrogram client; continuing without Telegram user client')
+        logger.exception('Failed to start Telethon client; continuing without Telegram user client')
 
     yield
 
