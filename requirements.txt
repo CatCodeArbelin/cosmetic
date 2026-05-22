@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pyrogram
+pyrofork
 tgcrypto
 aiogram>=3
 sqlalchemy>=2
