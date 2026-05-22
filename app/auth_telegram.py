@@ -11,13 +11,11 @@ def authorize_telegram() -> bool:
     sessions_dir = Path('/app/sessions')
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    session_name = sessions_dir / settings.pyrogram_session_name
-
     print('🔐 Запуск авторизации Telegram-аккаунта...')
     print('Введите номер телефона и код подтверждения Telegram в интерактивном режиме.')
 
     with Client(
-        name=str(session_name),
+        name=settings.pyrogram_session_name,
         api_id=settings.telegram_api_id,
         api_hash=settings.telegram_api_hash.get_secret_value(),
         workdir=str(sessions_dir),
