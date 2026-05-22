@@ -39,6 +39,33 @@ async def _migrate_dialogs_schema(connection) -> None:
     await connection.execute(text('CREATE INDEX IF NOT EXISTS ix_dialogs_assigned_operator_id ON dialogs (assigned_operator_id)'))
     await connection.execute(text('ALTER TABLE dialogs DROP COLUMN IF EXISTS title'))
 
+    await connection.execute(
+        text(
+            """
+            DO $$
+            DECLARE
+                constraint_name text;
+            BEGIN
+                SELECT tc.constraint_name INTO constraint_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu
+                  ON tc.constraint_name = ccu.constraint_name
+                 AND tc.table_schema = ccu.table_schema
+                WHERE tc.table_name = 'dialogs'
+                  AND tc.constraint_type = 'UNIQUE'
+                  AND ccu.column_name = 'external_chat_id'
+                LIMIT 1;
+
+                IF constraint_name IS NOT NULL THEN
+                    EXECUTE format('ALTER TABLE dialogs DROP CONSTRAINT %I', constraint_name);
+                END IF;
+            END$$;
+            """
+        )
+    )
+    await connection.execute(text('DROP INDEX IF EXISTS ix_dialogs_external_chat_id'))
+    await connection.execute(text('CREATE INDEX IF NOT EXISTS ix_dialogs_external_chat_id ON dialogs (external_chat_id)'))
+
 
 async def init_database(database_url: str) -> None:
     global _engine, _session_factory

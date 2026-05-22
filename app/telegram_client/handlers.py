@@ -87,7 +87,7 @@ async def _flush_buffer(external_chat_id: str) -> None:
             dialog_repo = DialogRepository(session)
             message_repo = MessageRepository(session)
 
-            dialog = await dialog_repo.get_by_external_chat_id(external_chat_id)
+            dialog = await dialog_repo.get_active_by_external_chat_id(external_chat_id)
             user_payload = latest.get('payload', {}).get('from_user', {})
             external_user_id = user_payload.get('id')
             first_name = user_payload.get('first_name') or ''
@@ -96,15 +96,25 @@ async def _flush_buffer(external_chat_id: str) -> None:
             username = user_payload.get('username')
 
             if dialog is None:
-                dialog = await dialog_repo.upsert_dialog(
-                    external_chat_id=external_chat_id,
-                    external_user_id=external_user_id,
-                    client_name=client_name,
-                    username=username,
-                    status=DialogStatus.NEW,
-                )
-            elif dialog.status == DialogStatus.CLOSED:
-                dialog = await dialog_repo.update_status(dialog.id, DialogStatus.NEW) or dialog
+                latest_dialog = await dialog_repo.get_latest_by_external_chat_id(external_chat_id)
+                if latest_dialog is not None and latest_dialog.status == DialogStatus.CLOSED:
+                    dialog = Dialog(
+                        external_chat_id=external_chat_id,
+                        external_user_id=external_user_id,
+                        client_name=client_name,
+                        username=username,
+                        status=DialogStatus.NEW,
+                    )
+                    session.add(dialog)
+                    await session.flush()
+                else:
+                    dialog = await dialog_repo.upsert_dialog(
+                        external_chat_id=external_chat_id,
+                        external_user_id=external_user_id,
+                        client_name=client_name,
+                        username=username,
+                        status=DialogStatus.NEW,
+                    )
 
             # Processing card for a batch:
             # use the latest message as AI trigger, while the rest are persisted as history.

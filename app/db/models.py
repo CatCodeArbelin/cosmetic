@@ -36,7 +36,7 @@ class Dialog(Base):
     __tablename__ = 'dialogs'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    external_chat_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    external_chat_id: Mapped[str] = mapped_column(String(255), index=True)
     external_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     client_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
