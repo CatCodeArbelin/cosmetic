@@ -3,12 +3,12 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='📥 Новые', callback_data='dialogs:new')],
-            [InlineKeyboardButton(text='👩‍💻 Мои', callback_data='dialogs:my')],
-            [InlineKeyboardButton(text='✅ Закрытые', callback_data='dialogs:closed')],
-            [InlineKeyboardButton(text='📈 Статистика', callback_data='dialogs:stats')],
-        ]
+        inline_keyboard=[[
+            InlineKeyboardButton(text='📥 Новые', callback_data='dialogs:new'),
+            InlineKeyboardButton(text='👩‍💻 Мои', callback_data='dialogs:my'),
+            InlineKeyboardButton(text='✅ Закрытые', callback_data='dialogs:closed'),
+            InlineKeyboardButton(text='📈 Статистика', callback_data='dialogs:stats'),
+        ]]
     )
 
 

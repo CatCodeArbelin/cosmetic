@@ -115,16 +115,16 @@ async def _render_dialog_card(message: Message, dialog_id: int) -> None:
             await message.answer('Диалог не найден.')
             return
 
-        incoming_messages = (
+        recent_messages = (
             await session.execute(
                 select(DialogMessage)
-                .where(DialogMessage.dialog_id == dialog_id, DialogMessage.direction == MessageDirection.INCOMING)
+                .where(DialogMessage.dialog_id == dialog_id)
                 .order_by(DialogMessage.created_at.desc())
                 .limit(5)
             )
         ).scalars().all()
 
-        latest_incoming = incoming_messages[0] if incoming_messages else None
+        latest_incoming = next((msg for msg in recent_messages if msg.direction == MessageDirection.INCOMING), None)
         suggestion = (
             await session.execute(_latest_suggestion_query(latest_incoming.id))
         ).scalar_one_or_none() if latest_incoming else None
@@ -135,21 +135,22 @@ async def _render_dialog_card(message: Message, dialog_id: int) -> None:
         f'Username: @{dialog.username}' if dialog.username else 'Username: —',
     ]
 
-    incoming_block = ['\n📩 Последние входящие:']
-    if incoming_messages:
-        for msg in incoming_messages:
-            incoming_block.append(f'• {(msg.text or "<без текста>").strip() or "<без текста>"}')
+    messages_block = ['\nСообщения:']
+    if recent_messages:
+        for msg in recent_messages:
+            prefix = '📩' if msg.direction == MessageDirection.INCOMING else '📤'
+            messages_block.append(f'• {prefix} {(msg.text or "<без текста>").strip() or "<без текста>"}')
     else:
-        incoming_block.append('• Нет входящих сообщений.')
+        messages_block.append('• Нет сообщений.')
 
     ai_block = [
-        '\n🤖 AI:',
+        '\nAI-варианты:',
         f'Вариант 1: {suggestion.variant_1 if suggestion else "—"}',
         f'Вариант 2: {suggestion.variant_2 if suggestion else "—"}',
     ]
 
     await message.answer(
-        '\n'.join(header + incoming_block + ai_block),
+        '\n'.join(header + messages_block + ai_block),
         reply_markup=dialog_actions_keyboard(dialog.id),
     )
 
@@ -174,7 +175,7 @@ async def dialog_action_handler(callback: CallbackQuery, state: FSMContext) -> N
         if action == 'take':
             assigned_dialog = await dialog_repo.assign_operator(dialog_id, callback.from_user.id)
             if assigned_dialog is None:
-                await callback.message.answer('Диалог уже в работе')
+                await callback.message.answer('Диалог уже в работе.')
             else:
                 await session.commit()
                 logger.info('operator took dialog', extra=_log_ctx(dialog_id=dialog_id, external_chat_id=dialog.external_chat_id, operator_id=callback.from_user.id, action='dialog_taken'))
