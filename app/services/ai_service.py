@@ -18,13 +18,17 @@ SYSTEM_PROMPT = (
 )
 
 
+def _log_ctx(dialog_id: int | str = '-', message_id: int | str = '-', external_chat_id: str = '-', operator_id: int | str = '-', action: str = '-') -> dict[str, int | str]:
+    return {'dialog_id': dialog_id, 'message_id': message_id, 'external_chat_id': external_chat_id, 'operator_id': operator_id, 'action': action}
+
+
 class AIService:
     def __init__(self, api_key: str, model: str, knowledge_service: KnowledgeService | None = None) -> None:
         self.client = AsyncOpenAI(api_key=api_key)
         self.model = model
         self.knowledge_service = knowledge_service or KnowledgeService()
 
-    async def generate_variants(self, customer_text: str) -> tuple[str, str]:
+    async def generate_variants(self, customer_text: str, dialog_id: int | None = None, message_id: int | None = None, external_chat_id: str | None = None) -> tuple[str, str]:
         context = self.knowledge_service.relevant_context(customer_text)
         user_prompt = (
             f'Сообщение клиента:\n{customer_text}\n\n'
@@ -32,6 +36,7 @@ class AIService:
             'Сформируй 2 коротких варианта ответа клиенту.'
         )
 
+        ctx = _log_ctx(dialog_id=dialog_id or '-', message_id=message_id or '-', external_chat_id=external_chat_id or '-', action='ai_generate')
         try:
             response = await self.client.responses.create(
                 model=self.model,
@@ -47,8 +52,8 @@ class AIService:
             if len(variants) >= 2:
                 return str(variants[0]).strip(), str(variants[1]).strip()
             raise ValueError('OpenAI returned invalid variants payload')
-        except Exception:
-            logger.exception('OpenAI generation failed, fallback is used')
+        except Exception as exc:
+            logger.exception('openai generation failed, fallback is used', extra={**ctx, 'error_type': type(exc).__name__})
             return (
                 'Спасибо за сообщение! Подберу для вас оптимальный вариант и скоро уточню детали.',
                 'Благодарим! Сейчас проверю информацию и вернусь к вам с точным ответом.',

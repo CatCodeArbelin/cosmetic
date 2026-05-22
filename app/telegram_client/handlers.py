@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 _flush_tasks: dict[str, asyncio.Task[None]] = {}
 
 
+def _log_ctx(dialog_id: int | str = '-', message_id: int | str = '-', external_chat_id: str = '-', operator_id: int | str = '-', action: str = '-') -> dict[str, int | str]:
+    return {'dialog_id': dialog_id, 'message_id': message_id, 'external_chat_id': external_chat_id, 'operator_id': operator_id, 'action': action}
+
+
 async def _process_incoming_message(message: TgMessage) -> None:
     if message.outgoing or message.service:
         return
@@ -32,10 +36,12 @@ async def _process_incoming_message(message: TgMessage) -> None:
 
     dedupe_key = f'msg:processed:{external_chat_id}:{message.id}'
     if not await redis.set(dedupe_key, '1', ex=3600, nx=True):
+        logger.warning('duplicate incoming ignored', extra=_log_ctx(message_id=message.id, external_chat_id=external_chat_id, action='incoming_deduplicated'))
         return
 
     buffer_key = f'msg:buffer:{external_chat_id}'
     await redis.rpush(buffer_key, json.dumps({'id': message.id, 'text': text, 'payload': message.model_dump()}))
+    logger.info('incoming received', extra=_log_ctx(message_id=message.id, external_chat_id=external_chat_id, action='incoming_received'))
     await redis.expire(buffer_key, max(60, settings.incoming_debounce_seconds * 5))
 
     await redis.set(f'fsm:dialog:{external_chat_id}', 'collecting', ex=300)
@@ -80,6 +86,7 @@ async def _flush_buffer(external_chat_id: str) -> None:
         await redis.set(f'fsm:dialog:{external_chat_id}', 'ready_for_ai', ex=300)
 
         combined_text = '\n'.join(item.get('text', '') for item in items if item.get('text'))
+        logger.info('batch assembled and flushed', extra=_log_ctx(message_id=items[-1].get('id','-'), external_chat_id=external_chat_id, action='batch_flushed'))
         latest = items[-1]
 
         session_factory = get_session_factory()
@@ -148,13 +155,18 @@ async def _flush_buffer(external_chat_id: str) -> None:
             trigger_message = saved_messages[-1]
 
             ai_service = AIService(settings.openai_api_key.get_secret_value(), settings.openai_model)
-            v1, v2 = await ai_service.generate_variants(combined_text)
+            logger.info('ai request send', extra=_log_ctx(dialog_id=dialog.id, message_id=trigger_message.id, external_chat_id=external_chat_id, action='ai_request_sent'))
+            v1, v2 = await ai_service.generate_variants(combined_text, dialog_id=dialog.id, message_id=trigger_message.id, external_chat_id=external_chat_id)
+            logger.info('ai response received', extra=_log_ctx(dialog_id=dialog.id, message_id=trigger_message.id, external_chat_id=external_chat_id, action='ai_response_received'))
             await AISuggestionRepository(session).save(trigger_message.id, v1, v2, settings.openai_model)
 
             await session.commit()
 
         await redis.set(f'fsm:dialog:{external_chat_id}', 'queued_for_operator', ex=600)
         await _notify_operators(dialog_id=dialog.id, dialog_title=dialog.title, text=combined_text, message_id=trigger_message.id)
+    except Exception as exc:
+        logger.exception('db error while flushing buffer', extra={**_log_ctx(external_chat_id=external_chat_id, action='flush_failed'), 'error_type': type(exc).__name__})
+        raise
     finally:
         await redis.delete(flush_lock_key)
 
@@ -182,8 +194,8 @@ async def _notify_operators(dialog_id: int, dialog_title: str | None, text: str 
     for operator_id in recipients:
         try:
             await bot.send_message(chat_id=operator_id, text=msg)
-        except Exception:
-            logger.exception('Failed to notify operator %s', operator_id)
+        except Exception as exc:
+            logger.exception('telegram error on operator notify', extra={**_log_ctx(dialog_id=dialog_id, message_id=message_id, operator_id=operator_id, action='notify_operator'), 'error_type': type(exc).__name__})
 
 
 def bind_bot_for_notifications(bot: Bot) -> None:
