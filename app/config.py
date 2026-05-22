@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     operator_ids: list[int] = Field(default_factory=list, alias='OPERATOR_IDS')
     incoming_debounce_seconds: int = Field(default=7, alias='INCOMING_DEBOUNCE_SECONDS', ge=0, le=60)
 
-    openai_api_key: SecretStr = Field(alias='OPENAI_API_KEY')
+    ai_enabled: bool = Field(default=False, alias='AI_ENABLED')
+    ai_provider: Literal['mock', 'openai'] = Field(default='mock', alias='AI_PROVIDER')
+    openai_api_key: SecretStr | None = Field(default=None, alias='OPENAI_API_KEY')
     openai_model: str = Field(default='gpt-4.1-mini', alias='OPENAI_MODEL')
 
     postgres_db: str = Field(default='cosmetic', alias='POSTGRES_DB')
@@ -41,6 +43,25 @@ class Settings(BaseSettings):
     postgres_port: int = Field(default=5432, alias='POSTGRES_PORT', ge=1, le=65535)
     database_url: str | None = Field(default=None, validation_alias=AliasChoices('DATABASE_URL', 'POSTGRES_URL'))
     redis_url: str = Field(alias='REDIS_URL')
+
+
+    @property
+    def ai_mode(self) -> str:
+        if not self.ai_enabled:
+            return 'off'
+        if self.ai_provider == 'mock':
+            return 'mock'
+        return 'openai'
+
+    @field_validator('openai_api_key')
+    @classmethod
+    def validate_openai_key(cls, value: SecretStr | None, info):
+        ai_enabled = info.data.get('ai_enabled', False)
+        ai_provider = info.data.get('ai_provider', 'mock')
+        if ai_enabled and ai_provider == 'openai':
+            if value is None or not value.get_secret_value().strip():
+                raise ValueError('OPENAI_API_KEY is required when AI_ENABLED=true and AI_PROVIDER=openai')
+        return value
 
     @property
     def resolved_database_url(self) -> str:

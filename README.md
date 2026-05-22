@@ -127,6 +127,28 @@ docker compose run --rm app python -m app.auth_telegram
    - `OPENAI_API_KEY`
    - `OPENAI_MODEL` (по умолчанию `gpt-4.1-mini`)
 
+
+## Как протестировать без OpenAI
+
+Добавьте в `.env`:
+
+```env
+AI_ENABLED=false
+AI_PROVIDER=mock
+```
+
+В этом режиме проект работает без `OPENAI_API_KEY` и без расходов на OpenAI.
+Можно полностью проверить:
+- приём сообщений;
+- очередь;
+- операторов;
+- кнопки;
+- ручные ответы;
+- отправку клиенту.
+
+Если включить OpenAI (`AI_ENABLED=true`, `AI_PROVIDER=openai`), нужен `OPENAI_API_KEY`.
+При ошибке OpenAI используются fallback-варианты, бот продолжает работу.
+
 ## 9) PostgreSQL и Redis конфигурация
 
 Используются переменные:
