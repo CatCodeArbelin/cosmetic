@@ -12,8 +12,24 @@ class DialogRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_external_chat_id(self, external_chat_id: str) -> Dialog | None:
-        query: Select[tuple[Dialog]] = select(Dialog).where(Dialog.external_chat_id == external_chat_id)
+    async def get_active_by_external_chat_id(self, external_chat_id: str) -> Dialog | None:
+        query: Select[tuple[Dialog]] = (
+            select(Dialog)
+            .where(Dialog.external_chat_id == external_chat_id)
+            .where(Dialog.status != DialogStatus.CLOSED)
+            .order_by(Dialog.updated_at.desc(), Dialog.id.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def get_latest_by_external_chat_id(self, external_chat_id: str) -> Dialog | None:
+        query: Select[tuple[Dialog]] = (
+            select(Dialog)
+            .where(Dialog.external_chat_id == external_chat_id)
+            .order_by(Dialog.updated_at.desc(), Dialog.id.desc())
+            .limit(1)
+        )
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
@@ -25,7 +41,7 @@ class DialogRepository:
         username: str | None = None,
         status: DialogStatus = DialogStatus.NEW,
     ) -> Dialog:
-        dialog = await self.get_by_external_chat_id(external_chat_id)
+        dialog = await self.get_active_by_external_chat_id(external_chat_id)
         if dialog is None:
             dialog = Dialog(
                 external_chat_id=external_chat_id,
@@ -70,7 +86,13 @@ class DialogRepository:
         return dialog
 
     async def get_new_dialogs(self, limit: int = 50) -> list[Dialog]:
-        query = select(Dialog).where(Dialog.status == DialogStatus.NEW).order_by(Dialog.created_at.desc()).limit(limit)
+        query = (
+            select(Dialog)
+            .where(Dialog.status == DialogStatus.NEW)
+            .where(Dialog.assigned_operator_id.is_(None))
+            .order_by(Dialog.created_at.desc())
+            .limit(limit)
+        )
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
@@ -86,7 +108,12 @@ class DialogRepository:
         return list(result.scalars().all())
 
     async def get_closed_dialogs(self, limit: int = 50) -> list[Dialog]:
-        query = select(Dialog).where(Dialog.status == DialogStatus.CLOSED).order_by(Dialog.updated_at.desc()).limit(limit)
+        query = (
+            select(Dialog)
+            .where(Dialog.status == DialogStatus.CLOSED)
+            .order_by(Dialog.updated_at.desc())
+            .limit(limit)
+        )
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
