@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import Select, exists, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AISuggestion, Dialog, DialogStatus, Message, MessageDirection, OperatorAction, OperatorActionType
@@ -136,6 +137,7 @@ class MessageRepository:
     async def save_message(
         self,
         dialog_id: int,
+        external_chat_id: str,
         telegram_message_id: int,
         direction: MessageDirection,
         raw_payload: dict[str, Any],
@@ -143,6 +145,7 @@ class MessageRepository:
     ) -> Message:
         message = Message(
             dialog_id=dialog_id,
+            external_chat_id=external_chat_id,
             telegram_message_id=telegram_message_id,
             direction=direction,
             raw_payload=raw_payload,
@@ -155,27 +158,51 @@ class MessageRepository:
     async def save_incoming(
         self,
         dialog_id: int,
+        external_chat_id: str,
         telegram_message_id: int,
         raw_payload: dict[str, Any],
         text: str | None = None,
     ) -> Message:
         return await self.save_message(
             dialog_id=dialog_id,
+            external_chat_id=external_chat_id,
             telegram_message_id=telegram_message_id,
             direction=MessageDirection.INCOMING,
             raw_payload=raw_payload,
             text=text,
         )
 
+    async def try_register_incoming(
+        self,
+        dialog_id: int,
+        external_chat_id: str,
+        telegram_message_id: int,
+        raw_payload: dict[str, Any],
+        text: str | None = None,
+    ) -> Message | None:
+        try:
+            async with self.session.begin_nested():
+                return await self.save_incoming(
+                    dialog_id=dialog_id,
+                    external_chat_id=external_chat_id,
+                    telegram_message_id=telegram_message_id,
+                    raw_payload=raw_payload,
+                    text=text,
+                )
+        except IntegrityError:
+            return None
+
     async def save_outgoing(
         self,
         dialog_id: int,
+        external_chat_id: str,
         telegram_message_id: int,
         raw_payload: dict[str, Any],
         text: str | None = None,
     ) -> Message:
         return await self.save_message(
             dialog_id=dialog_id,
+            external_chat_id=external_chat_id,
             telegram_message_id=telegram_message_id,
             direction=MessageDirection.OUTGOING,
             raw_payload=raw_payload,
